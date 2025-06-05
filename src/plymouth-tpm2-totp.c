@@ -188,6 +188,7 @@ main(int argc, char **argv)
 {
     state_t state = { 0, };
     int rc;
+    const char *msg = NULL;
 
     if (parse_opts(argc, argv) != 0) {
         return 1;
@@ -207,10 +208,10 @@ main(int argc, char **argv)
         opt.tcti = getenv(TPM2TOTP_ENV_TCTI);
     }
     rc = Tss2_TctiLdr_Initialize(opt.tcti, &state.tcti_context);
-    chkrc(rc, goto err);
+    chkrc(rc, msg = "Tss2_TctiLdr_Initialize() failed"; goto err1);
 
     rc = tpm2totp_loadKey_nv(opt.nvindex, state.tcti_context, &state.key_blob, &state.key_blob_size);
-    chkrc(rc, goto err);
+    chkrc(rc, msg = "tpm2totp_loadKey_nv() failed"; goto err1);
 
     display_totp(&state, state.event_loop);
 
@@ -221,7 +222,13 @@ main(int argc, char **argv)
     ply_event_loop_free(state.event_loop);
     Tss2_TctiLdr_Finalize(&state.tcti_context);
     return rc;
+err1:
+    if ( msg ) {
+        ply_boot_client_tell_daemon_to_display_message(state.boot_client, msg,
+                                                       NULL, NULL, NULL);
+    }
 
+    ply_event_loop_process_pending_events(state.event_loop);
 err:
     /* The event loop needs to be run once so that it can be freed cleanly */
     ply_event_loop_exit(state.event_loop, 1);
