@@ -168,7 +168,8 @@ display_totp(state_t *state, ply_event_loop_t *event_loop)
     } else {
         ERR("Couldn't calculate TOTP.\n");
         ply_boot_client_tell_daemon_to_display_message(state->boot_client,
-                                                       "TPM failure", NULL, NULL, NULL);
+                                                       "TPM failure: could not calculate TOTP (invalid or unsafe state? E.g., different boot img...)", NULL, NULL, NULL);
+	ply_event_loop_process_pending_events(event_loop);
         ply_event_loop_exit(event_loop, 1);
     }
 }
