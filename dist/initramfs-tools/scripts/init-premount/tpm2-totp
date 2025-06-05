@@ -20,4 +20,16 @@ for arg in $(cat /proc/cmdline); do
     esac
 done
 
-/bin/plymouth-tpm2-totp ${nvindex:+--nvindex "$nvindex"} &
+if /bin/plymouth --ping ; then
+    /bin/plymouth-tpm2-totp -t ${nvindex:+--nvindex "$nvindex"} &
+else
+    echo "Verify TOTP and press any key when ready to proceed"
+    # on every iteration print CR to overwrite old TOTP with update
+    while echo -en '\r' && /bin/tpm2-totp -t ${nvindex:+--nvindex "$nvindex"} show ; do
+        if read -t $(( 30 - $(date +%s) % 30 )) -n1 -r -s; then
+          # emit newline
+          echo ''
+          break
+        fi
+    done
+fi
