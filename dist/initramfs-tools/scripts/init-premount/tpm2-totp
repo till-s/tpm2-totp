@@ -12,6 +12,8 @@ case $1 in
         ;;
 esac
 
+. /scripts/functions
+
 for arg in $(cat /proc/cmdline); do
     case "$arg" in
         rd.tpm2-totp.nvindex=*)
@@ -21,7 +23,13 @@ for arg in $(cat /proc/cmdline); do
 done
 
 if /bin/plymouth --ping ; then
-    /bin/plymouth-tpm2-totp -t ${nvindex:+--nvindex "$nvindex"} &
+    /bin/plymouth-tpm2-totp -t ${nvindex:+--nvindex "$nvindex"} -c
+    rc=$?
+    if [ "$rc" -eq "2" ] ; then
+        panic "TOTP rejected by user!"
+    fi
+    # else if $rc -ne 0 a warning message is printed but
+    # the user may still proceed to unlock
 else
     echo "Verify TOTP and press any key when ready to proceed"
     # on every iteration print CR to overwrite old TOTP with update
