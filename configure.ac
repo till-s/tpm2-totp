@@ -45,6 +45,8 @@ helpersdir="$libexecdir/tpm2-totp"
 AC_SUBST([helpersdir])
 AX_RECURSIVE_EVAL([$helpersdir], [HELPERSDIR])
 AC_SUBST([HELPERSDIR])
+AX_RECURSIVE_EVAL([$bindir], [PROGBINDIR])
+AC_SUBST([PROGBINDIR])
 
 AC_CONFIG_FILES([Makefile Doxyfile dist/tpm2-totp.pc])
 
