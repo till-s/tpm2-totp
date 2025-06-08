@@ -10,6 +10,7 @@
 #include <stdlib.h>
 #include <inttypes.h>
 #include <getopt.h>
+#include <ctype.h>
 #include <ply-boot-client.h>
 #include <tss2/tss2_tctildr.h>
 
@@ -37,9 +38,10 @@ char *help =
     "    -t, --time      Show the time used for calculation\n"
     "    -T, --tcti      TCTI to use\n"
     "    -v, --verbose   print verbose messages\n"
+    "    -c, --confirm   wait for user to press key; reflect y/n in exit status\n"
     "\n";
 
-static const char *optstr = "hN:tT:v";
+static const char *optstr = "hcN:tT:v";
 
 static const struct option long_options[] = {
     {"help",     no_argument,       0, 'h'},
@@ -47,6 +49,7 @@ static const struct option long_options[] = {
     {"time",     no_argument,       0, 't'},
     {"tcti",     required_argument, 0, 'T'},
     {"verbose",  no_argument,       0, 'v'},
+    {"confirm",  no_argument,       0, 'c'},
     {0,          0,                 0,  0 }
 };
 
@@ -55,6 +58,7 @@ static struct opt {
     int time;
     char *tcti;
     int verbose;
+    int confirm;
 } opt;
 
 /** Parse and set command line options.
@@ -100,6 +104,9 @@ parse_opts(int argc, char **argv)
         case 'v':
             opt.verbose = 1;
             break;
+        case 'c':
+            opt.confirm = 1;
+            break;
         default:
             ERR("Unknown option at index %i.\n\n", opt_idx);
             ERR("%s", help);
@@ -125,7 +132,34 @@ parse_opts(int argc, char **argv)
 void
 on_disconnect(void *event_loop, ply_boot_client_t *boot_client __attribute__((unused)))
 {
-    ply_event_loop_exit(event_loop, 0);
+    /* When confirmation is required return non-zero status; otherwise 0 (for
+     * backwards compatibility)
+     */
+    ply_event_loop_exit(event_loop, opt.confirm ? 3 : 0);
+}
+
+/** Check user's decision.
+ *
+ * This function is called when the user presses a key to accept or reject
+ * the presented TOTP.
+ * Causes the program to exit with status 0 (accepted) or 2 (rejected).
+ */
+void
+on_keypress(void *user_data, const char *answer, ply_boot_client_t *client)
+{
+    state_t *state = (state_t*)user_data;
+    const char *msg = "User rejected TOTP";
+    int rc = 2;
+
+    if ( answer && ('Y' == toupper(*answer) ) ) {
+      msg = "User accepted TOTP";
+      rc = 0;
+    }
+
+    ply_boot_client_tell_daemon_to_display_message(client, msg,
+                                                   NULL, NULL, NULL);
+    ply_event_loop_process_pending_events(state->event_loop);
+    ply_event_loop_exit(state->event_loop, rc);
 }
 
 /** Display the TOTP.
@@ -141,11 +175,12 @@ void
 display_totp(state_t *state, ply_event_loop_t *event_loop)
 {
     int rc;
-    uint64_t totp;
-    time_t now;
+    uint64_t totp = 0;
+    time_t now = 0;
     struct tm now_local;
     char timestr[30] = "";
-    char totpstr[40] = "";
+    char totpstr[65] = "";
+    const char *prompt = opt.confirm ? " - accept TOTP y/[N] ?" : "";
 
     rc = tpm2totp_calculate(state->key_blob, state->key_blob_size,
                             state->tcti_context, &now, &totp);
@@ -157,11 +192,10 @@ display_totp(state_t *state, ply_event_loop_t *event_loop)
                 timestr[0] = '\0';
             }
         }
-        snprintf(totpstr, sizeof(totpstr)-1, "%s%06" PRIu64, timestr, totp);
+        snprintf(totpstr, sizeof(totpstr)-1, "%s%06" PRIu64 "%s", timestr, totp, prompt);
 
         ply_boot_client_tell_daemon_to_display_message(state->boot_client, totpstr,
                                                        NULL, NULL, NULL);
-
         ply_event_loop_watch_for_timeout(event_loop, 30-(now % 30),
                                          (ply_event_loop_timeout_handler_t) display_totp,
                                          state);
@@ -169,7 +203,7 @@ display_totp(state_t *state, ply_event_loop_t *event_loop)
         ERR("Couldn't calculate TOTP.\n");
         ply_boot_client_tell_daemon_to_display_message(state->boot_client,
                                                        "TPM failure: could not calculate TOTP (invalid or unsafe state? E.g., different boot img...)", NULL, NULL, NULL);
-	ply_event_loop_process_pending_events(event_loop);
+        ply_event_loop_process_pending_events(event_loop);
         ply_event_loop_exit(event_loop, 1);
     }
 }
@@ -181,7 +215,9 @@ display_totp(state_t *state, ply_event_loop_t *event_loop)
  * @param argc The argument count.
  * @param argv The arguments.
  * @retval 0 on success
- * @retval 1 on failure
+ * @retval 1 on failure (totp could not be computed for some reason)
+ * @retval 2 on user rejecting TOTP (-c option)
+ * @retval 3 on connection being terminating before user acknowledged TOTP (-c option)
  */
 int
 main(int argc, char **argv)
@@ -214,6 +250,11 @@ main(int argc, char **argv)
     chkrc(rc, msg = "tpm2totp_loadKey_nv() failed"; goto err1);
 
     display_totp(&state, state.event_loop);
+
+    if ( opt.confirm ) {
+        ply_boot_client_ask_daemon_to_watch_for_keystroke(state.boot_client, NULL,
+			                                  on_keypress, NULL, &state);
+    }
 
     rc = ply_event_loop_run(state.event_loop);
 
