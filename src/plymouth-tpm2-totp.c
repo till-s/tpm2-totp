@@ -148,11 +148,11 @@ void
 on_keypress(void *user_data, const char *answer, ply_boot_client_t *client)
 {
     state_t *state = (state_t*)user_data;
-    const char *msg = "User rejected TOTP";
+    const char *msg = "User rejected TOTP (Halting; please reboot)!";
     int rc = 2;
 
     if ( answer && ('Y' == toupper(*answer) ) ) {
-      msg = "User accepted TOTP";
+      msg = "User OK to proceed";
       rc = 0;
     }
 
@@ -224,10 +224,11 @@ main(int argc, char **argv)
 {
     state_t state = { 0, };
     int rc;
-    const char *msg = NULL;
+    char errstr[128] = "";
+    int retval = 0;
 
     if (parse_opts(argc, argv) != 0) {
-        return 1;
+        return retval;
     }
 
     state.event_loop = ply_event_loop_new();
@@ -235,6 +236,7 @@ main(int argc, char **argv)
 
     if (!ply_boot_client_connect(state.boot_client, on_disconnect, state.event_loop)) {
         ERR("plymouth daemon not running.\n");
+        ply_event_loop_exit(state.event_loop, 1);
         goto err;
     }
 
@@ -244,40 +246,37 @@ main(int argc, char **argv)
         opt.tcti = getenv(TPM2TOTP_ENV_TCTI);
     }
     rc = Tss2_TctiLdr_Initialize(opt.tcti, &state.tcti_context);
-    chkrc(rc, msg = "Tss2_TctiLdr_Initialize() failed"; goto err1);
+    chkrc(rc, snprintf(errstr, sizeof(errstr), "Tss2_TctiLdr_Initialize() failed%s", opt.confirm ?  "; proceed w/o TOTP? y/[N]" : ""); retval = 1;);
 
-    rc = tpm2totp_loadKey_nv(opt.nvindex, state.tcti_context, &state.key_blob, &state.key_blob_size);
-    chkrc(rc, msg = "tpm2totp_loadKey_nv() failed"; goto err1);
-
-    display_totp(&state, state.event_loop);
+    if ( 0 == retval ) {
+        rc = tpm2totp_loadKey_nv(opt.nvindex, state.tcti_context, &state.key_blob, &state.key_blob_size);
+        chkrc(rc, snprintf(errstr, sizeof(errstr), "tpm2totp_loadKey_nv() failed%s", opt.confirm ?  "; proceed w/o TOTP? y/[N]" : ""); retval = 1;);
+    }
 
     if ( opt.confirm ) {
         ply_boot_client_ask_daemon_to_watch_for_keystroke(state.boot_client, NULL,
 			                                  on_keypress, NULL, &state);
     }
 
-    rc = ply_event_loop_run(state.event_loop);
-
-    free(state.key_blob);
-    ply_boot_client_free(state.boot_client);
-    ply_event_loop_free(state.event_loop);
-    Tss2_TctiLdr_Finalize(&state.tcti_context);
-    return rc;
-err1:
-    if ( msg ) {
-        ply_boot_client_tell_daemon_to_display_message(state.boot_client, msg,
+    if ( 0 == retval ) {
+        display_totp(&state, state.event_loop);
+    } else {
+        ply_boot_client_tell_daemon_to_display_message(state.boot_client, errstr,
                                                        NULL, NULL, NULL);
+	if ( ! opt.confirm ) {
+            ply_event_loop_process_pending_events(state.event_loop);
+            ply_event_loop_exit(state.event_loop, retval);
+	}
     }
 
-    ply_event_loop_process_pending_events(state.event_loop);
+
 err:
     /* The event loop needs to be run once so that it can be freed cleanly */
-    ply_event_loop_exit(state.event_loop, 1);
-    ply_event_loop_run(state.event_loop);
+    retval = ply_event_loop_run(state.event_loop);
 
     free(state.key_blob);
     ply_boot_client_free(state.boot_client);
     ply_event_loop_free(state.event_loop);
     Tss2_TctiLdr_Finalize(&state.tcti_context);
-    return 1;
+    return retval;
 }
