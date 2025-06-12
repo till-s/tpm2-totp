@@ -2,6 +2,22 @@
 [![Code Coverage](https://codecov.io/gh/tpm2-software/tpm2-totp/branch/master/graph/badge.svg)](https://codecov.io/gh/tpm2-software/tpm2-totp)
 [![Language grade: C/C++](https://img.shields.io/lgtm/grade/cpp/g/tpm2-software/tpm2-totp.svg?logo=lgtm&logoWidth=18)](https://lgtm.com/projects/g/tpm2-software/tpm2-totp/context:cpp)
 [![Coverity Scan](https://scan.coverity.com/projects/22811/badge.svg)](https://scan.coverity.com/projects/tpm2-totp)
+# Fork Info
+
+This fork adds the following features:
+
+ - `plymouth-tpm2-totp`
+
+    - print errors (e.g., failure to unseal) not only to the (invisible) console
+      but show on the splash.
+
+    - added a `-c` (`--confirm`) option which -- when engaged -- causes the
+      program to prompt the user to press a key and reflects the choice
+      in the exit status (2 => user rejected, 0 => user accepted).
+
+ - `initramfs-tools` script: fall back on `tpm2-totp` CLI when plymouth
+   cannot be contacted. Thus, the script also works when `nosplash` is
+   in effect.
 
 # Overview
 This is a reimplementation of Matthew Garrett's
